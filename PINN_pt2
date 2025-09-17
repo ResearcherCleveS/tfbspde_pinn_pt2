@@ -1,0 +1,234 @@
+import streamlit as st
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+from scipy.special import gamma
+import math
+import matplotlib.pyplot as plt
+# %config InlineBackend.figure_formats='svg'
+# import plotly.io as pio
+# # Set the default renderer to display plots in your browser
+# pio.renderers.default = 'browser'
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import torch.distributions as distributions
+from matplotlib import cm # For colormaps
+
+st.title("Time Fractinal Black-Scholes Partial Differential Equation Rudy 👑 King Vester")
+
+# with st.sidebar:
+#   if st.button("**Summary**"):
+#     st.subheader("**AI plus Partial Differential Eqns ie Physics Informed Neural Network (PINN) demonstration.**")
+#     st.write("**We'll explore implementing a PINN to optimize the efficiency and application of the Black Scholes Formula.**")
+
+
+
+if st.button("**Summary**"):
+  st.subheader("**AI plus Partial Differential Eqns ie Physics Informed Neural Network (PINN) demonstration.**")
+  st.write("**We'll explore implementing a PINN to optimize the efficiency and application of the Black Scholes Formula.**")
+
+st.sidebar.header("Caputo Integer-Valued Derivatives")
+st.sidebar.write("May need to convert to integer value representations of fraction values.")
+st.sidebar.slider("𝗗𝛂", min_value=0.0, max_value=1.0, step=0.10, format='%.3f')
+
+st.sidebar.header("***Caputa Fractional Derivative***")
+𝗗𝛂 = st.sidebar.number_input(
+    "𝗗𝑐𝛂 𝙛´(𝒙)",
+    min_value=0.0,
+    max_value=1.00,
+    value=0.10,
+    step=0.10,
+    format="%.4f"
+)
+
+# with st.sidebar:
+#   st.header("**Caputo Integer-Valued Derivatives**")
+#   st.write("May need to convert to integer value representations of fraction values.")
+#   # st.markdown("$\sf d\over{\sf dx}$")
+#   st.slider("𝗗𝛂", min_value=0.0, max_value=1.0, step=0.125, format='%.3f')
+
+# T = Maturity time of put option
+# t = [0, T]
+# S = stock price
+# 𝑼(S, t) = the price of the option as a function of S and t.
+# 𝞼 = the the volatility of the stock
+# r = the risk-free interest rate
+# The Caputo 
+# 𝛂 = 2. I assume 𝛂-order derivative is 2, for 𝛂 ∈ [n-1, n], n ∈ ℕ, since the Black Scholes Eqn is second order.
+
+st.sidebar.header('Strike Price Filter Parameters')
+
+min_strike_pct = st.sidebar.number_input(
+    'Minimum Strike Price (% of Spot Price)',
+    min_value=50.0,
+    max_value=199.0,
+    value=80.0,
+    step=1.0,
+    format="%.1f"
+)
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+from scipy.special import gamma
+import math
+import matplotlib.pyplot as plt
+# %config InlineBackend.figure_formats='svg'
+import plotly.io as pio
+# Set the default renderer to display plots in your browser
+pio.renderers.default = 'browser'
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import torch.distributions as distributions
+from matplotlib import cm # For colormaps
+
+class PINN(nn.Module):
+  def __init__(self):
+    super(PINN, self).__init__()
+    self.hidden = nn.Sequential(
+        nn.Linear(2, 20),
+        nn.Sigmoid(),
+        nn.Linear(20, 20),
+        nn.Sigmoid(),
+        nn.Linear(20, 20),
+        nn.Sigmoid(),
+        nn.Linear(20, 20),
+        nn.Sigmoid(),
+        nn.Linear(20, 20),
+        nn.Sigmoid(),
+        nn.Linear(20,1)
+    )
+
+  def forward(self, x, t):
+    inputs = torch.cat([x, t], dim=1)
+    u = self.hidden(inputs)
+    return u
+
+def cost_function(x, tau, model, alpha=float, r=0.05, vol=0.35):
+  # Partial differential equation (PDE)
+  x.requires_grad = True
+  tau.requires_grad = True
+
+  # Predict u from the model
+  u = model(x, tau)
+  u_t = torch.autograd.grad(u, tau, torch.ones_like(u), create_graph = True)[0]
+  u_x = torch.autograd.grad(u, x, torch.ones_like(u), create_graph = True)[0]
+  u_xx = torch.autograd.grad(u_x, x, torch.ones_like(u_x), create_graph = True)[0]
+
+  u = u.reshape(N, N)
+  u_x = u_x.reshape(N, N)
+  u_xx = u_xx.reshape(N, N)
+  x = x.reshape(N, N)
+  tau = tau.reshape(N, N)
+
+  T = 1
+  delta_tau = T/N
+  w_k = u * (t - tau + 1e-03) ** -alpha * delta_tau
+  # w_k[torch.isinf(w_k)] = 0 # <-- comment out.
+  # w_k[torch.isnan(w_k)] = 0 # <-- comment out.
+  D_caputo = 1/gamma(1 - alpha) * w_k
+
+  residual = D_caputo - (r * u - r * x * u_x) * t ** (1-alpha)/gamma(2-alpha) + gamma(1+alpha)/2 * vol**2 * x**2 * u_xx
+  # residual = u_t + 0.5 * vol**2 * x**2 * u_xx + r * x * u_x - r * u # Black Scholes
+  # residual[torch.isnan(residual)] = 0 # <-- comment out.
+  # residual[torch.isinf(residual)] = 0 # <-- comment out.
+  return residual ** 2 / (2*N*N)
+
+def initial_condition(x, K=10):
+  return torch.maximum(K-x.detach(), torch.tensor(0))
+
+def boundary_condition(x, t, K=10, r=0.05):
+  # May be can try all zeros?
+  return torch.where(x == 0, K * torch.exp(-r * t), torch.zeros_like(t))
+
+# Create the training data
+N = 50 #200 #50
+x = torch.linspace(0, 20, N).view(-1, 1)
+t = torch.linspace(0,  1, N).view(-1, 1) # Global temporal definition.
+x_coll, tau = torch.meshgrid(x.squeeze(), t.squeeze(), indexing='xy')
+x_coll = x_coll.reshape(-1,1)   # <-- collocation spatial points.
+tau = tau.reshape(-1,1)         # <-- collocation temporal points.
+
+# fig = plt.figure(figsize=(12, 7))
+# fig.suptitle('European Put payoff for sigma = 0.35')
+r = [1,1,2,2]
+c = [1,2,1,2]
+fig = make_subplots(
+  rows=2, cols=2,
+  specs=[[{'type': 'surface'}] * 2] * 2,
+  subplot_titles=('alpha = 0.1', 'alpha = 0.3', 'alpha = 0.7', 'alpha = 0.9')
+)
+u_pred_lst = []
+for j, alpha in enumerate(np.array([0.1, 0.3, 0.7, 0.9])):
+    
+    # Define the model, optimizer, and loss function
+    model = PINN()
+    l_rate = [0.01, 0.001, 0.0005]
+    i = 0
+    optimizer = optim.Adam(model.parameters(), l_rate[i])
+    
+    # Training Loop
+    num_epochs = 3000
+    for epoch in range(num_epochs):
+      model.train()
+    
+      # Compute initial condition (IC) loss
+      u_pred = model(x, torch.zeros_like(x))  # u(x, 0)
+      u_true = initial_condition(x)
+      loss_ic = torch.mean((u_pred - u_true)**2)  # mean squared error (MSE) for IC
+    
+      # Compute boundary condition loss
+      u_pred_left = model(torch.full_like(t, 0.0), t)  # u(0, t)
+      u_pred_right = model(torch.full_like(t, 20.0), t)  # u(1, t)
+      loss_bc = torch.mean((u_pred_left - boundary_condition(torch.full_like(t, 0.0), t)) ** 2) + \
+                torch.mean((u_pred_right - boundary_condition(torch.full_like(t, 20.0), t))**2)
+                
+      # Compute PDE residual loss
+      residual = cost_function(x_coll, tau, model, alpha=alpha)
+      loss_pde = torch.mean(residual ** 2)  # MSE for PDE residual
+    
+      # Total loss
+      loss = loss_ic + loss_bc + loss_pde
+    
+      # Backpropagation and optimization
+      optimizer.zero_grad()
+      loss.backward()
+      optimizer.step()
+    
+      if (epoch) % 50 == 0: # % 1000 == 0: ...
+        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f} & num epochs: {epoch + 1}')
+        if (epoch + 1) % 1000 == 0:
+          i += 1
+          optimizer = optim.Adam(model.parameters(), lr=l_rate[i])
+      M = 100
+      x_test = torch.linspace(0, 20, M).view(-1, 1)
+      t_test = torch.linspace(0,  1, M).view(-1, 1)
+      x_test, t_test = torch.meshgrid(x_test.squeeze(), t_test.squeeze(), indexing='xy')
+      x_test = x_test.reshape(-1, 1)
+      t_test = t_test.reshape(-1, 1)
+  
+      model.eval()
+      with torch.no_grad():
+        u_pred_lst.append(model(x_test, t_test).numpy())
+  
+      # Reshape the predicted u values for a surface plotting
+      x_test = x_test.numpy().reshape(M, M)
+      t_test = t_test.numpy().reshape(M, M)
+      u_pred_lst[j] = u_pred_lst[j].reshape(M, M)
+      
+      fig.add_trace(
+      go.Surface(x=x_test, y=t_test, z=u_pred_lst[j], colorscale='Viridis', showscale=True,
+      opacity=0.75),
+      row=r[j], col=c[j],
+      )
+    fig.update_layout(
+      title_text='European Put payoff for sigma = 0.35',
+      height=800, width=800,
+      scene=dict(
+      xaxis_title='Stock Price',
+      yaxis_title='Time to maturity',
+      zaxis_title='Option price'
+    ))
+    st.plotly_chart(fig) #, use_container_width=True)
